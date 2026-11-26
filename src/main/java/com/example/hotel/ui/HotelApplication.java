@@ -36,6 +36,7 @@ import javafx.stage.FileChooser;
 
 import java.io.File;
 import java.io.IOException;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
@@ -85,11 +86,7 @@ public final class HotelApplication extends Application {
         stage.setTitle("Hotel Reservation System");
         stage.setScene(new Scene(tabs, 940, 650));
         stage.show();
-        runTask(() -> {
-            Database database = new Database(AppConfig.databasePath());
-            database.initialize();
-            return new ReservationService(new JdbcReservationDao(database), Clock.systemDefaultZone());
-        }, loaded -> {
+        runTask(this::createService, loaded -> {
             service = loaded;
             refreshRooms();
             refreshReservations();
@@ -101,7 +98,13 @@ public final class HotelApplication extends Application {
         LOG.info("Application stopped");
     }
 
-    private Tab roomsTab() {
+    private ReservationService createService() throws IOException, SQLException {
+        Database database = new Database(AppConfig.databasePath());
+        database.initialize();
+        return new ReservationService(new JdbcReservationDao(database), Clock.systemDefaultZone());
+    }
+
+    private void configureRoomTable() {
         roomTable.setPlaceholder(new Label("No rooms found for these dates"));
         TableColumn<Room, String> number = new TableColumn<>("Room");
         number.setCellValueFactory(cell -> new ReadOnlyStringWrapper(cell.getValue().getNumber()));
@@ -117,37 +120,18 @@ public final class HotelApplication extends Application {
             selectedRoom = room;
             updateEstimate();
         });
+    }
 
+    private Tab roomsTab() {
+        configureRoomTable();
         minimumGuests.setPromptText("Any");
         minimumGuests.setPrefWidth(75);
         Button showAll = new Button("All rooms");
         showAll.setOnAction(event -> refreshRooms());
         Button search = new Button("Search available");
-        search.setOnAction(event -> {
-            int count;
-            try {
-                count = minimumGuests.getText().isBlank() ? 0 : Integer.parseInt(minimumGuests.getText().trim());
-            } catch (NumberFormatException error) {
-                alert(Alert.AlertType.WARNING, "Guests must be a whole number");
-                return;
-            }
-            if (!ready()) return;
-            LocalDate in = searchIn.getValue();
-            LocalDate out = searchOut.getValue();
-            runTask(() -> service.searchAvailable(in, out, count),
-                    rooms -> showRooms(rooms, "No available rooms match this search"), null);
-        });
+        search.setOnAction(event -> searchAvailableRooms());
         Button choose = new Button("Reserve selected room");
-        choose.setOnAction(event -> {
-            if (selectedRoom == null) {
-                alert(Alert.AlertType.INFORMATION, "Select a room first");
-                return;
-            }
-            bookingIn.setValue(searchIn.getValue());
-            bookingOut.setValue(searchOut.getValue());
-            tabs.getSelectionModel().select(1);
-            updateEstimate();
-        });
+        choose.setOnAction(event -> chooseSelectedRoom());
         HBox filters = new HBox(10, new Label("Check-in"), searchIn, new Label("Check-out"),
                 searchOut, new Label("Guests"), minimumGuests, search, showAll);
         VBox top = new VBox(10, filters, roomMessage);
@@ -182,7 +166,7 @@ public final class HotelApplication extends Application {
         return tab("New Reservation", pane);
     }
 
-    private Tab reservationsTab() {
+    private void configureReservationTable() {
         reservationTable.setPlaceholder(new Label("No reservations found"));
         TableColumn<Reservation, Long> id = new TableColumn<>("ID");
         id.setCellValueFactory(cell -> new ReadOnlyObjectWrapper<>(cell.getValue().getId()));
@@ -200,6 +184,10 @@ public final class HotelApplication extends Application {
         status.setCellValueFactory(cell -> new ReadOnlyObjectWrapper<>(cell.getValue().getStatus()));
         reservationTable.getColumns().addAll(id, name, room, checkIn, checkOut, total, status);
         reservationTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+    }
+
+    private Tab reservationsTab() {
+        configureReservationTable();
         reservationSearch.setPromptText("Reservation ID or guest name");
         Button search = new Button("Search");
         search.setOnAction(event -> refreshReservations());
@@ -234,6 +222,32 @@ public final class HotelApplication extends Application {
         selectedRoom = null;
         roomTable.getItems().setAll(rooms);
         roomMessage.setText(rooms.isEmpty() ? emptyMessage : rooms.size() + " room(s) shown");
+        updateEstimate();
+    }
+
+    private void searchAvailableRooms() {
+        int count;
+        try {
+            count = minimumGuests.getText().isBlank() ? 0 : Integer.parseInt(minimumGuests.getText().trim());
+        } catch (NumberFormatException error) {
+            alert(Alert.AlertType.WARNING, "Guests must be a whole number");
+            return;
+        }
+        if (!ready()) return;
+        LocalDate in = searchIn.getValue();
+        LocalDate out = searchOut.getValue();
+        runTask(() -> service.searchAvailable(in, out, count),
+                rooms -> showRooms(rooms, "No available rooms match this search"), null);
+    }
+
+    private void chooseSelectedRoom() {
+        if (selectedRoom == null) {
+            alert(Alert.AlertType.INFORMATION, "Select a room first");
+            return;
+        }
+        bookingIn.setValue(searchIn.getValue());
+        bookingOut.setValue(searchOut.getValue());
+        tabs.getSelectionModel().select(1);
         updateEstimate();
     }
 
@@ -290,18 +304,23 @@ public final class HotelApplication extends Application {
         String number = phone.getText();
         bookingInProgress = true;
         bookButton.setDisable(true);
-        runTask(() -> service.book(room, name, number, count, in, out), reservation -> {
-            LOG.info("Reservation booked: ID " + reservation.getId());
-            alert(Alert.AlertType.INFORMATION, "Booked! Reservation ID " + reservation.getId()
-                    + ", " + reservation.nights() + " night(s), ₹" + reservation.getTotalRupees());
-            refreshRooms();
-            reservationSearch.clear();
-            refreshReservations();
-            tabs.getSelectionModel().select(2);
-        }, () -> {
-            bookingInProgress = false;
-            updateEstimate();
-        });
+        runTask(() -> service.book(room, name, number, count, in, out),
+                this::showBookingConfirmation, this::finishBooking);
+    }
+
+    private void showBookingConfirmation(Reservation reservation) {
+        LOG.info("Reservation booked: ID " + reservation.getId());
+        alert(Alert.AlertType.INFORMATION, "Booked! Reservation ID " + reservation.getId()
+                + ", " + reservation.nights() + " night(s), ₹" + reservation.getTotalRupees());
+        refreshRooms();
+        reservationSearch.clear();
+        refreshReservations();
+        tabs.getSelectionModel().select(2);
+    }
+
+    private void finishBooking() {
+        bookingInProgress = false;
+        updateEstimate();
     }
 
     private void cancelSelected() {
@@ -375,20 +394,23 @@ public final class HotelApplication extends Application {
         });
         task.setOnFailed(event -> {
             if (finished != null) finished.run();
-            Throwable error = task.getException();
-            if (error instanceof ValidationException || error instanceof RoomUnavailableException) {
-                alert(Alert.AlertType.WARNING, error.getMessage());
-            } else if (error instanceof IOException) {
-                LOG.log(Level.WARNING, "File operation failed", error);
-                alert(Alert.AlertType.ERROR, "File operation failed. Check path, permissions or snapshot format.");
-            } else {
-                LOG.log(Level.SEVERE, "Storage or file operation failed", error);
-                alert(Alert.AlertType.ERROR, "Operation failed. Check the database location and application log.");
-            }
+            showTaskError(task.getException());
         });
         Thread worker = new Thread(task, "hotel-worker");
         worker.setDaemon(true);
         worker.start();
+    }
+
+    private void showTaskError(Throwable error) {
+        if (error instanceof ValidationException || error instanceof RoomUnavailableException) {
+            alert(Alert.AlertType.WARNING, error.getMessage());
+        } else if (error instanceof IOException) {
+            LOG.log(Level.WARNING, "File operation failed", error);
+            alert(Alert.AlertType.ERROR, "File operation failed. Check path, permissions or snapshot format.");
+        } else {
+            LOG.log(Level.SEVERE, "Storage or file operation failed", error);
+            alert(Alert.AlertType.ERROR, "Operation failed. Check the database location and application log.");
+        }
     }
 
     @FunctionalInterface

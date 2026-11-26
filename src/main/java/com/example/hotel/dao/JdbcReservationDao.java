@@ -92,37 +92,11 @@ public final class JdbcReservationDao implements ReservationDao {
         try (Connection connection = database.open()) {
             connection.setAutoCommit(false);
             try {
-                String overlap = "SELECT 1 FROM reservations WHERE room_id = ? AND status = 'ACTIVE' "
-                        + "AND check_in < ? AND check_out > ? LIMIT 1";
-                try (PreparedStatement statement = connection.prepareStatement(overlap)) {
-                    statement.setLong(1, room.getId());
-                    statement.setString(2, checkOut.toString());
-                    statement.setString(3, checkIn.toString());
-                    try (ResultSet rows = statement.executeQuery()) {
-                        if (rows.next()) {
-                            connection.rollback();
-                            return Optional.empty();
-                        }
-                    }
+                if (rollbackIfReservationOverlaps(connection, room, checkIn, checkOut)) {
+                    return Optional.empty();
                 }
-                String insert = "INSERT INTO reservations(room_id, guest_name, guest_phone, guests, "
-                        + "check_in, check_out, total_rupees, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE')";
-                try (PreparedStatement statement = connection.prepareStatement(insert)) {
-                    statement.setLong(1, room.getId());
-                    statement.setString(2, guest.getName());
-                    statement.setString(3, guest.getPhone());
-                    statement.setInt(4, guests);
-                    statement.setString(5, checkIn.toString());
-                    statement.setString(6, checkOut.toString());
-                    statement.setLong(7, totalRupees);
-                    statement.executeUpdate();
-                }
-                long id;
-                try (Statement statement = connection.createStatement();
-                     ResultSet row = statement.executeQuery("SELECT last_insert_rowid()")) {
-                    row.next();
-                    id = row.getLong(1);
-                }
+                insertReservation(connection, room, guest, guests, checkIn, checkOut, totalRupees);
+                long id = readInsertedReservationId(connection);
                 connection.commit();
                 return Optional.of(new Reservation(id, guest, room, guests, checkIn, checkOut,
                         totalRupees, ReservationStatus.ACTIVE));
@@ -143,6 +117,51 @@ public final class JdbcReservationDao implements ReservationDao {
                 "UPDATE reservations SET status = 'CANCELLED' WHERE id = ? AND status = 'ACTIVE'")) {
             statement.setLong(1, id);
             return statement.executeUpdate() == 1;
+        }
+    }
+
+    private static boolean rollbackIfReservationOverlaps(Connection connection, Room room,
+                                                          LocalDate checkIn, LocalDate checkOut)
+            throws SQLException {
+        String overlap = "SELECT 1 FROM reservations WHERE room_id = ? AND status = 'ACTIVE' "
+                + "AND check_in < ? AND check_out > ? LIMIT 1";
+        try (PreparedStatement statement = connection.prepareStatement(overlap)) {
+            statement.setLong(1, room.getId());
+            statement.setString(2, checkOut.toString());
+            statement.setString(3, checkIn.toString());
+            try (ResultSet rows = statement.executeQuery()) {
+                if (rows.next()) {
+                    // Roll back before closing the query resources, preserving failure ordering.
+                    connection.rollback();
+                    return true;
+                }
+                return false;
+            }
+        }
+    }
+
+    private static void insertReservation(Connection connection, Room room, Guest guest, int guests,
+                                          LocalDate checkIn, LocalDate checkOut, long totalRupees)
+            throws SQLException {
+        String insert = "INSERT INTO reservations(room_id, guest_name, guest_phone, guests, "
+                + "check_in, check_out, total_rupees, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE')";
+        try (PreparedStatement statement = connection.prepareStatement(insert)) {
+            statement.setLong(1, room.getId());
+            statement.setString(2, guest.getName());
+            statement.setString(3, guest.getPhone());
+            statement.setInt(4, guests);
+            statement.setString(5, checkIn.toString());
+            statement.setString(6, checkOut.toString());
+            statement.setLong(7, totalRupees);
+            statement.executeUpdate();
+        }
+    }
+
+    private static long readInsertedReservationId(Connection connection) throws SQLException {
+        try (Statement statement = connection.createStatement();
+             ResultSet row = statement.executeQuery("SELECT last_insert_rowid()")) {
+            row.next();
+            return row.getLong(1);
         }
     }
 

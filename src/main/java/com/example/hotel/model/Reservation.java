@@ -16,9 +16,22 @@ public final class Reservation {
 
     public Reservation(long id, Guest guest, Room room, int guests, LocalDate checkIn,
                        LocalDate checkOut, long totalRupees, ReservationStatus status) {
-        if (id <= 0 || guests <= 0 || guests > Objects.requireNonNull(room, "room").getCapacity()
-                || totalRupees < 0 || !Objects.requireNonNull(checkOut, "checkOut")
-                .isAfter(Objects.requireNonNull(checkIn, "checkIn"))) {
+        if (id <= 0) {
+            throw new IllegalArgumentException("Invalid reservation details");
+        }
+        if (guests <= 0) {
+            throw new IllegalArgumentException("Invalid reservation details");
+        }
+        Objects.requireNonNull(room, "room");
+        if (guests > room.getCapacity()) {
+            throw new IllegalArgumentException("Invalid reservation details");
+        }
+        if (totalRupees < 0) {
+            throw new IllegalArgumentException("Invalid reservation details");
+        }
+        Objects.requireNonNull(checkOut, "checkOut");
+        Objects.requireNonNull(checkIn, "checkIn");
+        if (!checkOut.isAfter(checkIn)) {
             throw new IllegalArgumentException("Invalid reservation details");
         }
         this.id = id;

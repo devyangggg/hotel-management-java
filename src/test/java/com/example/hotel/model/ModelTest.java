@@ -29,4 +29,92 @@ class ModelTest {
                 ReservationStatus.ACTIVE);
         assertEquals(2, stay.nights());
     }
+
+    @Test
+    void reservationRejectsInvalidValuesWithOriginalMessage() {
+        Guest guest = new Guest("Ana", "+1234567890");
+        Room room = new StandardRoom(1, "101", 2, 2200);
+        LocalDate checkIn = LocalDate.of(2026, 1, 31);
+        LocalDate checkOut = LocalDate.of(2026, 2, 2);
+
+        assertEquals("Invalid reservation details", assertThrows(IllegalArgumentException.class,
+                () -> new Reservation(0, guest, room, 2, checkIn, checkOut, 4400,
+                        ReservationStatus.ACTIVE)).getMessage());
+        assertEquals("Invalid reservation details", assertThrows(IllegalArgumentException.class,
+                () -> new Reservation(-1, guest, room, 2, checkIn, checkOut, 4400,
+                        ReservationStatus.ACTIVE)).getMessage());
+        assertEquals("Invalid reservation details", assertThrows(IllegalArgumentException.class,
+                () -> new Reservation(1, guest, room, 0, checkIn, checkOut, 4400,
+                        ReservationStatus.ACTIVE)).getMessage());
+        assertEquals("Invalid reservation details", assertThrows(IllegalArgumentException.class,
+                () -> new Reservation(1, guest, room, -1, checkIn, checkOut, 4400,
+                        ReservationStatus.ACTIVE)).getMessage());
+        assertEquals("Invalid reservation details", assertThrows(IllegalArgumentException.class,
+                () -> new Reservation(1, guest, room, 3, checkIn, checkOut, 4400,
+                        ReservationStatus.ACTIVE)).getMessage());
+        assertEquals("Invalid reservation details", assertThrows(IllegalArgumentException.class,
+                () -> new Reservation(1, guest, room, 2, checkIn, checkOut, -1,
+                        ReservationStatus.ACTIVE)).getMessage());
+        assertEquals("Invalid reservation details", assertThrows(IllegalArgumentException.class,
+                () -> new Reservation(1, guest, room, 2, checkIn, checkIn, 4400,
+                        ReservationStatus.ACTIVE)).getMessage());
+        assertEquals("Invalid reservation details", assertThrows(IllegalArgumentException.class,
+                () -> new Reservation(1, guest, room, 2, checkIn, checkIn.minusDays(1), 4400,
+                        ReservationStatus.ACTIVE)).getMessage());
+    }
+
+    @Test
+    void reservationRejectsMissingArgumentsWithOriginalNullMessages() {
+        Guest guest = new Guest("Ana", "+1234567890");
+        Room room = new StandardRoom(1, "101", 2, 2200);
+        LocalDate checkIn = LocalDate.of(2026, 1, 31);
+        LocalDate checkOut = LocalDate.of(2026, 2, 2);
+
+        assertEquals("room", assertThrows(NullPointerException.class,
+                () -> new Reservation(1, guest, null, 2, checkIn, checkOut, 4400,
+                        ReservationStatus.ACTIVE)).getMessage());
+        assertEquals("checkIn", assertThrows(NullPointerException.class,
+                () -> new Reservation(1, guest, room, 2, null, checkOut, 4400,
+                        ReservationStatus.ACTIVE)).getMessage());
+        assertEquals("checkOut", assertThrows(NullPointerException.class,
+                () -> new Reservation(1, guest, room, 2, checkIn, null, 4400,
+                        ReservationStatus.ACTIVE)).getMessage());
+        assertEquals("guest", assertThrows(NullPointerException.class,
+                () -> new Reservation(1, null, room, 2, checkIn, checkOut, 4400,
+                        ReservationStatus.ACTIVE)).getMessage());
+        assertEquals("status", assertThrows(NullPointerException.class,
+                () -> new Reservation(1, guest, room, 2, checkIn, checkOut, 4400,
+                        null)).getMessage());
+    }
+
+    @Test
+    void reservationPreservesValidationOrderForCombinedInvalidArguments() {
+        Room room = new StandardRoom(1, "101", 2, 2200);
+        LocalDate checkIn = LocalDate.of(2026, 1, 31);
+        LocalDate checkOut = LocalDate.of(2026, 2, 2);
+
+        // Invalid IDs and guest counts short-circuit before the room null check.
+        assertEquals("Invalid reservation details", assertThrows(IllegalArgumentException.class,
+                () -> new Reservation(0, null, null, 0, null, null, -1, null)).getMessage());
+        assertEquals("Invalid reservation details", assertThrows(IllegalArgumentException.class,
+                () -> new Reservation(1, null, null, 0, null, null, -1, null)).getMessage());
+
+        // Room validation precedes total and date validation.
+        assertEquals("room", assertThrows(NullPointerException.class,
+                () -> new Reservation(1, null, null, 2, null, null, -1, null)).getMessage());
+        assertEquals("Invalid reservation details", assertThrows(IllegalArgumentException.class,
+                () -> new Reservation(1, null, room, 3, null, null, -1, null)).getMessage());
+        assertEquals("Invalid reservation details", assertThrows(IllegalArgumentException.class,
+                () -> new Reservation(1, null, room, 2, null, null, -1, null)).getMessage());
+
+        // Checkout is checked before check-in, and both precede guest and status.
+        assertEquals("checkOut", assertThrows(NullPointerException.class,
+                () -> new Reservation(1, null, room, 2, null, null, 4400, null)).getMessage());
+        assertEquals("checkIn", assertThrows(NullPointerException.class,
+                () -> new Reservation(1, null, room, 2, null, checkOut, 4400, null)).getMessage());
+        assertEquals("Invalid reservation details", assertThrows(IllegalArgumentException.class,
+                () -> new Reservation(1, null, room, 2, checkIn, checkIn, 4400, null)).getMessage());
+        assertEquals("guest", assertThrows(NullPointerException.class,
+                () -> new Reservation(1, null, room, 2, checkIn, checkOut, 4400, null)).getMessage());
+    }
 }
